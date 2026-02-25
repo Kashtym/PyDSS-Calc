@@ -13,6 +13,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+import traceback
+
 from engine.db_manager import EquipmentManager
 from engine.models import BatteryModel, LineModel, LoadModel, SourceModel
 from engine.protection_core import UniversalTCC
@@ -727,12 +729,21 @@ def main() -> int:
     parser.add_argument("project", help="Path to project YAML file")
     args = parser.parse_args()
 
+    # try:
+    #     report_path = run(args.project)
+    #     print(f"Report generated: {report_path}")
+    #     return 0
+    # except Exception as exc:
+    #     print(f"Error: {exc}", file=sys.stderr)
+    #     return 1
+
     try:
         report_path = run(args.project)
         print(f"Report generated: {report_path}")
         return 0
-    except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+    except Exception:
+        # Это выведет подробную карту (стек) вызовов
+        traceback.print_exc() 
         return 1
 
 
