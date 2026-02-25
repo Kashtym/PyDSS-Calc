@@ -45,7 +45,8 @@ class EquipmentManager:
             self.db_path,
             sheet_name=None,
             engine="odf",
-            skiprows=1,
+            # skiprows=1,
+            header=0,    # Явно говорим: заголовки в ПЕРВОЙ строке (индекс 0)
         )
         normalized = {self._normalize_name(name): df for name, df in sheets.items()}
 
@@ -61,6 +62,8 @@ class EquipmentManager:
         self.batteries_df = self._sanitize_dataframe(normalized["batteries"])
         self.breakers_df = self._sanitize_dataframe(normalized["circuitbreakers"])
         self.fuses_df = self._sanitize_dataframe(normalized["fuses"])
+
+        # print(f"ПРАЦЮЮ З ФАЙЛОМ: {os.path.abspath(self.db_path)}")
 
     def get_raw_cable(self, cable_id: str) -> dict[str, Any]:
         """Return raw cable row from the ``Cables`` sheet by ID.
@@ -143,6 +146,10 @@ class EquipmentManager:
 
     @staticmethod
     def _sanitize_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+        if not df.empty:
+        # Просто всегда удаляем первую(пояснительную) строку данных 
+            df = df.iloc[1:].reset_index(drop=True)
+
         cleaned = df.copy()
         cleaned.columns = [str(col).strip() for col in cleaned.columns]
         cleaned = cleaned.dropna(how="all")
@@ -172,3 +179,10 @@ class EquipmentManager:
     @staticmethod
     def _series_to_dict(row: pd.Series) -> dict[str, Any]:
         return {str(key): value for key, value in row.items()}
+    
+    # @staticmethod
+    # def _series_to_dict(row: pd.Series) -> dict[str, Any]:
+    #     d = {str(key): value for key, value in row.items()}
+    #     # ДОДАЙТЕ ЦЕЙ РЯДОК:
+    #     print(f"DEBUG ROW DATA: {d}") 
+    #     return d
