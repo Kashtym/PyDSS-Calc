@@ -1,0 +1,69 @@
+# Dictionary of protection configurations for UniversalTCC class
+
+# 1. СТАНДАРТНИЙ ЗАПОБІЖНИК (Fuse)
+# Використовує одну середню криву CSV та розкид по струму ±10%
+fuse_standard_gg:
+    type: "Fuse"
+    L_stage:
+        source_type: "csv"
+        fuse_id: "Gg_160A_2P" # find curve_csv from library.ods
+        # curve_csv: "data/curves/fuse/OEZ/Gg_16.csv"
+        current_tolerance_pct: 10 # ±10% shift on Current axis for Min/Max
+    S_stage: { active: false }
+    I_stage: { active: false }
+
+# 2. АВТОМАТ ТИПУ C (Standard MCB)
+# L-зона за точками (CSV), I-зона — миттєва відсічка з розкидом по струму
+mcb_type_c:
+    type: "MCB"
+    L_stage:
+        source_type: "2csv"
+        In: 2 # Nominal current
+        curve_csv_max: "data/curves/mcb/Shneider/iC60H_DC/curve_max.csv"
+        curve_csv_min: "data/curves/mcb/Shneider/iC60H_DC/curve_min.csv"
+        time_tolerance_pct: 0 # use max and min curves
+    S_stage: { active: false }
+    I_stage:
+        active: true
+        source_type: "constant"
+        breaker_id: "C60H-DC_16A_2P_C"
+        # I_inst: 10.0  # find from library.ods
+        # T_inst: 0.015  # find from library.ods
+        # curr_tol_inst_pct: 20 # find from library.ods
+
+# 3. MICROLOGIC 5.2 (LSI) з похилою лінією I2t
+# L-зона по точках, S-зона — ПОХИЛА ЛІНІЯ (I2t ON), I-зона — відсічка
+micrologic_52_lsi_i2t:
+    type: "Electronic"
+    L_stage:
+        source_type: "csv"
+        curve_csv: "data/curves/mcb/Shneider/iC60H_DC/curve_max.csv"
+        Ir_adjust: 1.0 # Ir = 1.0 * In
+        tr: 10.0 # Reference time at 6*Ir
+        time_tolerance_pct: 10
+    S_stage:
+        active: true
+        source_type: "i2t_slope" # ПОХИЛА ЛІНІЯ (I2t ON)
+        Isd: 4.0 # Threshold 4 * Ir
+        tsd: 0.2 # Delay at Isd
+        current_tolerance_pct: 10
+        time_tolerance_pct: 10
+    I_stage:
+        active: true
+        source_type: "constant"
+        Ii: 12.0 # Instantaneous 12 * In
+        t_instant: 0.02
+        current_tolerance_pct: 15
+
+# 4. РЕЛЕ МТЗ (IEC Inverse Relay)
+# Приклад використання чистої математичної формули
+relay_mtz_very_inverse:
+    type: "Relay"
+    L_stage:
+        source_type: "iec_formula"
+        curve_type: "very_inverse" # alpha=1.0, beta=13.5
+        k_multiplier: 0.1
+        Is_set: 1.0 # 1.0 * In
+        current_tolerance_pct: 5
+    S_stage: { active: false }
+    I_stage: { active: false }

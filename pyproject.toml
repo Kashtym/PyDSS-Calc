@@ -1,0 +1,32 @@
+[project]
+name = "open-dss-calculator"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Hennadii Kashtymov",email = "kashtymov.eto2@gmail.com"}
+]
+requires-python = "^3.11"
+dependencies = [
+    "opendssdirect-py (>=0.9.4,<0.10.0)",
+    "streamlit (>=1.54.0,<2.0.0)",
+    "numpy (>=2.4.2,<3.0.0)",
+    "scipy (>=1.17.0,<2.0.0)",
+    "matplotlib (>=3.10.8,<4.0.0)",
+    "plotly (>=6.5.2,<7.0.0)",
+    "odfpy (>=1.4.1,<2.0.0)",
+    "pandas (>=2.3,<3)",
+    "pyyaml (>=6.0.3,<7.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[dependency-groups]
+dev = [
+    "pytest (>=9.0.2,<10.0.0)"
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

@@ -1,0 +1,61 @@
+project_name: "Substation_LV_Panel"
+calculation_mode: "AC"
+frequency: 50
+temperature: 70
+
+source:
+    type: "Vsource"
+    basekv: 0.4 # Лінійна напруга 400В
+    mvasc3: 15.0 # Потужність 3-фазного КЗ на шинах ТР
+    mvasc1: 10.0 # Потужність 1-фазного КЗ на шинах ТР
+    neutral_grounding: "grounded" # Глухозаземлена нейтраль (0.4 кВ)
+
+topology:
+    - name: "Main_Feeder"
+      from_bus: "B1 SourceBus"
+      to_bus: "B2 Distribution_Board"
+      cable_id: "VVGng_2х50" # Обов'язково має бути в library.ods
+      length_km: 0.200 # Довжина
+      breaker_id: "C60H-DC_16A_2P_C" # Автомат захисту
+
+    - name: "Lighting_Circuit 1"
+      from_bus: "B2 Distribution_Board"
+      to_bus: "B3 Light_Panel 1"
+      cable_id: "VVGng_2х6"
+      length_km: 0.100
+      breaker_id: "C60H-DC_2A_2P_C"
+
+    - name: "Lighting_Circuit 2"
+      from_bus: "B2 Distribution_Board"
+      to_bus: "B4 Light_Panel 2"
+      cable_id: "VVGng_2х6"
+      length_km: 0.100
+      breaker_id: "C60H-DC_2A_2P_C"
+
+    - name: "Lighting_Circuit 3"
+      from_bus: "B2 Distribution_Board"
+      to_bus: "B5 Light_Panel 3"
+      cable_id: "VVGng_2х6"
+      length_km: 0.100
+      breaker_id: "C60H-DC_2A_2P_C"
+      phases: 1
+
+load:
+    - name: "L1 load"
+      bus: "B3 Light_Panel"
+      power_kw: 3
+      pf: 0.9
+
+    - name: "L2 load"
+      bus: "B4 Light_Panel"
+      power_kw: 1
+      pf: 0.9
+      phases: 1
+      phase: 2 #B
+
+    - name: "L3 load"
+      bus: "B5 Light_Panel"
+      power_kw: 1
+      pf: 0.9
+      phases: 1
+      phase: 3 #C

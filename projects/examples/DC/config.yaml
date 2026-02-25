@@ -1,0 +1,43 @@
+project_name: "Substation_Alpha_DC"
+calculation_mode: "DC"
+voltage_kv: 0.22
+temperature: 20 # Робоча температура для розрахунку КЗ
+
+battery:
+    name: "BAT1"
+    bus: "B1 SourceBus"
+    model_id: "BAE_2_OGi_300"
+    n_cells: 104
+    jumpers_mohm: 0.5
+
+topology:
+    # Описуємо послідовні ділянки мережі
+    - name: "W1 line"
+      from_bus: "B1 SourceBus"
+      to_bus: "B2 Panel_Bus"
+      cable_id: "VVGng_2x25"
+      breaker_id: "C60H-DC_16A_2P_C"
+      length_km: 0.050
+
+    - name: "W2 line"
+      from_bus: "B2 Panel_Bus"
+      to_bus: "B3 Terminal_Load 1"
+      cable_id: "VVGng_2x10"
+      breaker_id: "C60H-DC_16A_2P_C"
+      length_km: 0.050
+
+    - name: "W3 line"
+      from_bus: "B2 Panel_Bus"
+      to_bus: "B4 Terminal_Load 2"
+      cable_id: "VVGng_2x10"
+      breaker_id: "C60H-DC_2A_2P_C"
+      length_km: 0.050
+
+load:
+    - name: "L1 load"
+      bus: "B3 Terminal_Load 1"
+      power_kw: 2
+
+    - name: "L2 load"
+      bus: "B4 Terminal_Load 2"
+      power_kw: 1
