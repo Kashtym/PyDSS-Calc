@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -175,7 +176,7 @@ def _to_abs_curve_path(curve_value: str) -> str:
 def _build_breaker_tcc_defaults(breaker_row: dict[str, Any]) -> dict[str, Any]:
     defaults: dict[str, Any] = {
         "type": "MCB",
-        "In": float(breaker_row["In"]),
+        "In": _read_numeric(breaker_row, ["In", "I_n", "In_A", "I_nom_A"]),
         "L_stage": {"active": True},
         "S_stage": {"active": False},
         "I_stage": {"active": False},
@@ -202,7 +203,7 @@ def _build_fuse_tcc_defaults(fuse_row: dict[str, Any]) -> dict[str, Any]:
     curve_single = _to_abs_curve_path(str(fuse_row.get("curve", fuse_row.get("curve_min", ""))))
     return {
         "type": "Fuse",
-        "In": float(fuse_row["In"]),
+        "In": _read_numeric(fuse_row, ["In", "I_n", "In_A", "I_nom_A"]),
         "L_stage": {
             "active": True,
             "source_type": "csv",
@@ -211,6 +212,25 @@ def _build_fuse_tcc_defaults(fuse_row: dict[str, Any]) -> dict[str, Any]:
         "S_stage": {"active": False},
         "I_stage": {"active": False},
     }
+
+
+def _read_numeric(row: dict[str, Any], candidates: list[str], default: float | None = None) -> float:
+    for key in candidates:
+        if key in row:
+            try:
+                return float(row[key])
+            except (TypeError, ValueError):
+                continue
+    for value in row.values():
+        try:
+            num = float(value)
+            if np.isfinite(num):
+                return num
+        except (TypeError, ValueError):
+            continue
+    if default is not None:
+        return float(default)
+    raise ValueError(f"Cannot parse numeric value from row for keys: {candidates}")
 
 
 def _write_report(
@@ -516,9 +536,9 @@ def run(project_path: str) -> str:
         if breaker_id_raw:
             breaker_id_resolved = _resolve_id(str(breaker_id_raw), manager.get_all_breaker_ids(), "CircuitBreakers")
             breaker_row = manager.get_raw_breaker(breaker_id_resolved)
-            p_loss_w = float(breaker_row["P_loss_W"])
-            in_a = float(breaker_row["In"])
-            poles = float(breaker_row["Poles"])
+            p_loss_w = _read_numeric(breaker_row, ["P_loss_W", "P_loss", "Ploss_W"])
+            in_a = _read_numeric(breaker_row, ["In", "I_n", "In_A", "I_nom_A"])
+            poles = _read_numeric(breaker_row, ["Poles", "N_poles", "PoleCount"], default=1.0)
             r_breaker = (p_loss_w / (in_a**2)) * poles
             total_r_ohm += float(r_breaker)
             protection_plan.append(
@@ -535,8 +555,8 @@ def run(project_path: str) -> str:
         if fuse_id_raw:
             fuse_id_resolved = _resolve_id(str(fuse_id_raw), manager.get_all_fuse_ids(), "Fuses")
             fuse_row = manager.get_raw_fuse(fuse_id_resolved)
-            p_loss = float(fuse_row["P_loss_W"])
-            in_a = float(fuse_row["In"])
+            p_loss = _read_numeric(fuse_row, ["P_loss_W", "P_loss", "Ploss_W"])
+            in_a = _read_numeric(fuse_row, ["In", "I_n", "In_A", "I_nom_A"])
             r_fuse = p_loss / (in_a**2)
             total_r_ohm += r_fuse
             protection_plan.append(
@@ -635,15 +655,17 @@ def run(project_path: str) -> str:
         if pp["device_type"] == "Breaker":
             br_row = manager.get_raw_breaker(pp["device_id"])
             tcc_defaults = _build_breaker_tcc_defaults(br_row)
-            tcc = UniversalTCC.from_config(tcc_defaults, protection_settings=None, nominal_current_in=float(br_row["In"]))
-            tcc_devices.append({"label": str(pp["device_id"]), "In": float(br_row["In"]), "tcc": tcc})
+            breaker_in = _read_numeric(br_row, ["In", "I_n", "In_A", "I_nom_A"])
+            tcc = UniversalTCC.from_config(tcc_defaults, protection_settings=None, nominal_current_in=breaker_in)
+            tcc_devices.append({"label": str(pp["device_id"]), "In": breaker_in, "tcc": tcc})
             t_min = float(tcc.calculate_time(i_fault, mode="min"))
             t_max = float(tcc.calculate_time(i_fault, mode="max"))
         else:
             fuse_row = manager.get_raw_fuse(pp["device_id"])
             tcc_defaults = _build_fuse_tcc_defaults(fuse_row)
-            tcc = UniversalTCC.from_config(tcc_defaults, protection_settings=None, nominal_current_in=float(fuse_row["In"]))
-            tcc_devices.append({"label": str(pp["device_id"]), "In": float(fuse_row["In"]), "tcc": tcc})
+            fuse_in = _read_numeric(fuse_row, ["In", "I_n", "In_A", "I_nom_A"])
+            tcc = UniversalTCC.from_config(tcc_defaults, protection_settings=None, nominal_current_in=fuse_in)
+            tcc_devices.append({"label": str(pp["device_id"]), "In": fuse_in, "tcc": tcc})
             t_min = float(tcc.calculate_time(i_fault, mode="min"))
             t_max = float(tcc.calculate_time(i_fault, mode="max"))
 
