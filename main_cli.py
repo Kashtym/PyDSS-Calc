@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
+from math import sqrt
 
 import numpy as np
 import pandas as pd
@@ -170,42 +171,60 @@ def _bus_tokens(name: str) -> set[str]:
 
 def _to_abs_curve_path(curve_value: str) -> str:
     curve = str(curve_value).replace("\\", os.sep).strip()
-    if not curve:
+    # Защита от pandas NaN и пустых значений
+    if not curve or curve.lower() in {"nan", "none", ""}:
         return ""
     return os.path.join("data", curve) if not os.path.isabs(curve) else curve
 
 
 def _build_breaker_tcc_defaults(breaker_row: dict[str, Any]) -> dict[str, Any]:
+    row = {k.lower(): v for k, v in breaker_row.items()}
+
     defaults: dict[str, Any] = {
         "type": "MCB",
-        "In": _read_numeric(breaker_row, ["In", "I_n", "In_A", "I_nom_A"]),
+        "In": _read_numeric(row, ["in", "i_n", "in_a", "i_nom_a"]),
         "L_stage": {"active": True},
         "S_stage": {"active": False},
         "I_stage": {"active": False},
     }
 
-    curve_min = _to_abs_curve_path(str(breaker_row.get("curve_min", "")))
-    curve_max = _to_abs_curve_path(str(breaker_row.get("curve_max", "")))
-    curve_single = _to_abs_curve_path(str(breaker_row.get("curve", "")))
+    curve_min = _to_abs_curve_path(str(row.get("curve_min", "")))
+    curve_max = _to_abs_curve_path(str(row.get("curve_max", "")))
+    curve_single = _to_abs_curve_path(str(row.get("curve", "")))
+
     if curve_min and curve_max:
-        defaults["L_stage"].update(
-            {
-                "source_type": "2csv",
-                "curve_csv_min": curve_min,
-                "curve_csv_max": curve_max,
-            }
-        )
+        defaults["L_stage"].update({
+            "source_type": "2csv",
+            "curve_csv_min": curve_min,
+            "curve_csv_max": curve_max,
+        })
     elif curve_single:
         defaults["L_stage"].update({"source_type": "csv", "curve_csv": curve_single})
 
+    i_inst_mult = float(row.get("i_inst", 0.0) or 0.0)
+    t_inst = float(row.get("t_inst", 0.02) or 0.02)
+    curr_tol_inst_pct = float(row.get("curr_tol_inst_pct", 0.0) or 0.0)
+
+    if i_inst_mult > 0:
+        defaults["I_stage"] = {
+            "active": True,
+            "source_type": "constant",
+            "Ii": i_inst_mult,
+            "t_instant": t_inst,
+            "t_instant_min": 0.002,
+            "curr_tol_inst_pct": curr_tol_inst_pct,  # <-- передаём допуск
+        }
+
     return defaults
 
-
 def _build_fuse_tcc_defaults(fuse_row: dict[str, Any]) -> dict[str, Any]:
-    curve_single = _to_abs_curve_path(str(fuse_row.get("curve", fuse_row.get("curve_min", ""))))
+    row = {k.lower(): v for k, v in fuse_row.items()}
+
+    curve_single = _to_abs_curve_path(str(row.get("curve", row.get("curve_min", ""))))
+
     return {
         "type": "Fuse",
-        "In": _read_numeric(fuse_row, ["In", "I_n", "In_A", "I_nom_A"]),
+        "In": _read_numeric(row, ["in", "i_n", "in_a", "i_nom_a"]),
         "L_stage": {
             "active": True,
             "source_type": "csv",
@@ -214,7 +233,6 @@ def _build_fuse_tcc_defaults(fuse_row: dict[str, Any]) -> dict[str, Any]:
         "S_stage": {"active": False},
         "I_stage": {"active": False},
     }
-
 
 def _read_numeric(row: dict[str, Any], candidates: list[str], default: float | None = None) -> float:
     for key in candidates:
@@ -339,19 +357,29 @@ def _write_report(
                 )
             f.write("\n")
 
-            f.write("Normal Mode Phase Currents\n")
+            f.write("Normal Mode Currents\n")
             f.write("--------------------------\n")
-            f.write("Line | I1 (A) | I2 (A) | I3 (A) | Imax (A)\n")
+
             line_currents_lut = {str(k).lower(): v for k, v in line_phase_currents.items()}
-            for row in line_rows:
-                line_name = str(row["name"])
-                phase_i = line_phase_currents.get(line_name, line_currents_lut.get(line_name.lower(), {}))
-                i1 = float(phase_i.get("I1_A", 0.0))
-                i2 = float(phase_i.get("I2_A", 0.0))
-                i3 = float(phase_i.get("I3_A", 0.0))
-                imax = max(i1, i2, i3)
-                f.write(f"{line_name} | {i1:.3f} | {i2:.3f} | {i3:.3f} | {imax:.3f}\n")
+            if mode == "DC":
+                f.write("Line | I (A)\n")
+                for row in line_rows:
+                    line_name = str(row["name"])
+                    phase_i = line_phase_currents.get(line_name, line_currents_lut.get(line_name.lower(), {}))
+                    i = float(phase_i.get("I1_A", 0.0))
+                    f.write(f"{line_name} | {i:.3f}\n")
+            else:
+                f.write("Line | I1 (A) | I2 (A) | I3 (A) | Imax (A)\n")
+                for row in line_rows:
+                    line_name = str(row["name"])
+                    phase_i = line_phase_currents.get(line_name, line_currents_lut.get(line_name.lower(), {}))
+                    i1 = float(phase_i.get("I1_A", 0.0))
+                    i2 = float(phase_i.get("I2_A", 0.0))
+                    i3 = float(phase_i.get("I3_A", 0.0))
+                    imax = max(i1, i2, i3)
+                    f.write(f"{line_name} | {i1:.3f} | {i2:.3f} | {i3:.3f} | {imax:.3f}\n")
             f.write("\n")
+
 
             f.write("Voltage Profile\n")
             f.write("---------------\n")
@@ -366,10 +394,13 @@ def _write_report(
                     drop = ((nominal_v - vmax) / nominal_v * 100.0) if nominal_v > 0 else 0.0
                     f.write(f"{bus} | {v1:.3f} | {v2:.3f} | {v3:.3f} | {drop:.3f}\n")
             else:
-                f.write("Bus Name | Voltage (V) | Voltage Drop (%)\n")
+                nominal_220 = 220.0
+                f.write("Bus Name | Voltage (V) | Voltage (%) | Voltage Drop (V) | Voltage Drop (%)\n")
                 for bus, voltage in sorted(bus_voltages.items()):
-                    drop = ((nominal_v - voltage) / nominal_v * 100.0) if nominal_v > 0 else 0.0
-                    f.write(f"{bus} | {voltage:.3f} | {drop:.3f}\n")
+                    voltage_pct = (voltage / nominal_220 * 100.0)
+                    drop_v = nominal_v - voltage
+                    drop_pct = (drop_v / nominal_v * 100.0) if nominal_v > 0 else 0.0
+                    f.write(f"{bus} | {voltage:.3f} | {voltage_pct:.1f} | {drop_v:.3f} | {drop_pct:.3f}\n")
 
             f.write("\n")
             f.write("Fault Currents\n")
@@ -412,13 +443,17 @@ def run(project_path: str) -> str:
     if not isinstance(topology, list):
         raise ValueError("'topology' must be a list")
     load_cfg = project.get("load")
+
+
     load_items: list[dict[str, Any]] = []
     if isinstance(load_cfg, dict):
         load_items = [load_cfg]
     elif isinstance(load_cfg, list):
         load_items = [item for item in load_cfg if isinstance(item, dict)]
 
+
     solver = DSSSolver()
+    dss = solver._get_dss()
     battery_cfg: dict[str, Any] = {}
     battery_params: dict[str, Any] = {}
     source_cfg: dict[str, Any] = {}
@@ -468,8 +503,11 @@ def run(project_path: str) -> str:
             phases=source_phases,
             phase=source_phase,
         )
+        
+
         source_bus = _safe_token(source_bus_raw)
         source_kv = source_base_kv
+        nominal_v = source_base_kv * 1000.0 / (1.732 if source_phases == 3 else 1.0)
     else:
         solver.setup_simulation(mode=mode, frequency=frequency)
         battery_cfg = project.get("battery", {})
@@ -487,6 +525,7 @@ def run(project_path: str) -> str:
         battery_model = BatteryModel(raw_cell)
         battery_params = battery_model.get_params(n_cells=n_cells, jumpers_mohm=jumpers_mohm)
         source_kv = float(battery_cfg.get("voltage_kv", float(battery_params["U_total_V"]) / 1000.0))
+        nominal_v = float(battery_params.get("U_total_V", 0.0))
         solver.add_element(
             battery_model,
             name=battery_name,
@@ -532,16 +571,44 @@ def run(project_path: str) -> str:
         line_model = LineModel(raw_cable)
         line_params = line_model.get_params(mode=mode, length_km=length_km, temperature=temperature)
 
-        total_r_ohm = float(line_params["R_ohm"])
+        if mode == "DC":
+            # DC: ток идёт по + и - — двойная длина
+            cable_r = float(line_params["R_ohm"]) * 2.0
+            cable_x = 0.0
+            cable_r0 = 0.0
+            cable_x0 = 0.0
+        elif line_phases == 1:
+            # AC однофазная линия: аналогично x2
+            cable_r = float(line_params["R_ohm"]) * 2.0
+            cable_x = float(line_params["X_ohm"]) * 2.0
+            cable_r0 = float(line_params["R0_ohm"])
+            cable_x0 = float(line_params["X0_ohm"])
+        else:
+            # AC трёхфазная: x1
+            cable_r = float(line_params["R_ohm"])
+            cable_x = float(line_params["X_ohm"])
+            cable_r0 = float(line_params["R0_ohm"])
+            cable_x0 = float(line_params["X0_ohm"])
+
+        total_r_ohm = cable_r
 
         breaker_id_raw = item.get("breaker_id")
         if breaker_id_raw:
             breaker_id_resolved = _resolve_id(str(breaker_id_raw), manager.get_all_breaker_ids(), "CircuitBreakers")
             breaker_row = manager.get_raw_breaker(breaker_id_resolved)
+
             p_loss_w = _read_numeric(breaker_row, ["P_loss_W", "P_loss", "Ploss_W"])
             in_a = _read_numeric(breaker_row, ["In", "I_n", "In_A", "I_nom_A"])
             poles = _read_numeric(breaker_row, ["Poles", "N_poles", "PoleCount"], default=1.0)
-            r_breaker = (p_loss_w / (in_a**2)) * poles
+            r_one_pole = p_loss_w / (in_a ** 2)
+
+            # DC и однофазный AC: ток через все полюса последовательно
+            # Трёхфазный AC: ток только через один полюс (фазный)
+            if mode == "DC" or line_phases == 1:
+                r_breaker = r_one_pole * poles
+            else:
+                r_breaker = r_one_pole
+
             total_r_ohm += float(r_breaker)
             protection_plan.append(
                 {
@@ -559,7 +626,14 @@ def run(project_path: str) -> str:
             fuse_row = manager.get_raw_fuse(fuse_id_resolved)
             p_loss = _read_numeric(fuse_row, ["P_loss_W", "P_loss", "Ploss_W"])
             in_a = _read_numeric(fuse_row, ["In", "I_n", "In_A", "I_nom_A"])
-            r_fuse = p_loss / (in_a**2)
+            poles = _read_numeric(fuse_row, ["Poles", "N_poles", "PoleCount"], default=1.0)
+            r_one_pole = p_loss / (in_a ** 2)
+
+            if mode == "DC" or line_phases == 1:
+                r_fuse = r_one_pole * poles
+            else:
+                r_fuse = r_one_pole
+
             total_r_ohm += r_fuse
             protection_plan.append(
                 {
@@ -570,17 +644,41 @@ def run(project_path: str) -> str:
                     "r_device_ohm": float(r_fuse),
                 }
             )
-        solver.add_element(
-            line_model,
-            name=line_name,
-            bus1=from_bus,
-            bus2=to_bus,
-            length_km=length_km,
-            temperature=temperature,
-            phases=line_phases,
-            phase=line_phase,
-        )
-        solver.set_line_resistance(line_name, total_r_ohm, r0_ohm=total_r_ohm if mode == "DC" else None)
+
+
+        try:
+            solver.add_element(
+                line_model,
+                name=line_name,
+                bus1=from_bus,
+                bus2=to_bus,
+                length_km=length_km,
+                temperature=temperature,
+                phases=line_phases,
+                phase=line_phase,
+            )
+
+        except Exception as e:
+
+            traceback.print_exc()
+
+
+        if mode == "DC":
+            solver.set_line_resistance(line_name, total_r_ohm)
+        elif line_phases == 1:
+            solver.set_line_resistance(
+                line_name, total_r_ohm,
+                x1_ohm=cable_x,
+                r0_ohm=cable_r0,
+                x0_ohm=cable_x0,
+            )
+        else:
+            solver.set_line_resistance(
+                line_name, total_r_ohm,
+                x1_ohm=cable_x,
+                r0_ohm=cable_r0,
+                x0_ohm=cable_x0,
+            )
 
         line_rows.append(
             {
@@ -595,11 +693,28 @@ def run(project_path: str) -> str:
         known_line_buses.append((to_bus, to_bus_raw))
 
     for idx, load_item in enumerate(load_items, start=1):
+
+
+        load_phases = int(load_item.get("phases", 1 if mode == "DC" else 3))
+
+        if "voltage_kv" in load_item:
+            load_voltage_kv = float(load_item["voltage_kv"])
+        elif mode == "DC":
+            if default_voltage_kv > 0:
+                load_voltage_kv = default_voltage_kv
+            else: 
+                load_voltage_kv = source_base_kv
+        elif mode == "AC" and load_phases == 1:
+            load_voltage_kv = source_base_kv / sqrt(3.0)  # 0.4/√3 = 0.231 В
+        else:
+            load_voltage_kv = source_base_kv
+
         load_model = LoadModel(
             power_kw=float(load_item.get("power_kw", 0.0)),
-            voltage_kv=float(load_item.get("voltage_kv", source_kv if mode == "AC" else (default_voltage_kv if default_voltage_kv > 0 else source_kv))),
+            voltage_kv=load_voltage_kv,
             pf=float(load_item.get("pf", 1.0)),
         )
+
         load_name = _safe_token(str(load_item.get("name", f"LD{idx}")))
         load_bus_raw = str(load_item.get("bus", line_rows[-1]["to_bus"] if line_rows else "LoadBus"))
         load_bus = _safe_token(load_bus_raw)
@@ -615,6 +730,8 @@ def run(project_path: str) -> str:
                     load_bus_raw = candidates[0][1]
 
         load_phases = int(load_item.get("phases", 1 if mode == "DC" else 3))
+
+
         load_phase = int(load_item.get("phase", 1))
         solver.add_element(
             load_model,
@@ -624,12 +741,21 @@ def run(project_path: str) -> str:
             phase=load_phase,
         )
 
+
+
     if load_items:
         load_bus = _safe_token(str(load_items[0].get("bus", "LoadBus")))
     else:
         load_bus = _safe_token(str(line_rows[-1]["to_bus"] if line_rows else project.get("fault_load_bus", "LoadBus")))
+
+
+
     fault_results = solver.run_fault_study(source_bus=source_bus, load_bus=load_bus)
-    power_flow_results = solver.run_power_flow()
+
+
+    power_flow_results = solver.run_power_flow(nominal_voltage_v=nominal_v)
+
+
 
     protection_rows: list[dict[str, Any]] = []
     tcc_devices: list[dict[str, Any]] = []
@@ -729,13 +855,6 @@ def main() -> int:
     parser.add_argument("project", help="Path to project YAML file")
     args = parser.parse_args()
 
-    # try:
-    #     report_path = run(args.project)
-    #     print(f"Report generated: {report_path}")
-    #     return 0
-    # except Exception as exc:
-    #     print(f"Error: {exc}", file=sys.stderr)
-    #     return 1
 
     try:
         report_path = run(args.project)

@@ -128,16 +128,17 @@ class OpenDSSSolver:
         name = kwargs.get("name", self._next_name("L"))
 
         if phases == 1:
-            bus1 = f"{bus1}.{phase}"
-            bus2 = f"{bus2}.{phase}"
+            bus1 = f"{bus1}.{phase}.0"
+            bus2 = f"{bus2}.{phase}.0"
 
         p = model.get_params(mode=self.mode, length_km=length_km, temperature=temperature)
         dss = self._get_dss()
         command = (
             f"New Line.{name} "
             f"Bus1={bus1} Bus2={bus2} Phases={phases} "
-            f"R1={p['R_ohm']} X1={p['X_ohm']} C1={p['C_nf']} "
-            f"R0={p.get('R0_ohm', 0.0)} X0={p.get('X0_ohm', 0.0)}"
+            f"R1={p['R_ohm']} X1={p['X_ohm']} C1=0 "
+            f"R0={p.get('R0_ohm', 0.0)} X0={p.get('X0_ohm', 0.0)} "
+            f"Length=1 Units=km"
         )
         dss.Text.Command(command)
         return f"Line.{name}"
@@ -278,16 +279,25 @@ class OpenDSSSolver:
         self._counter += 1
         return f"{prefix}{self._counter}"
 
-    def set_line_resistance(self, line_name: str, r1_ohm: float, r0_ohm: float | None = None) -> None:
-        """Override line resistance values after element creation."""
-
+    def set_line_resistance(
+        self,
+        line_name: str,
+        r1_ohm: float,
+        r0_ohm: float | None = None,
+        x1_ohm: float | None = None,
+        x0_ohm: float | None = None,
+    ) -> None:
         dss = self._get_dss()
-        r1 = float(r1_ohm)
-        if r0_ohm is None:
-            dss.Text.Command(f"Edit Line.{line_name} R1={r1}")
-        else:
-            r0 = float(r0_ohm)
-            dss.Text.Command(f"Edit Line.{line_name} R1={r1} R0={r0}")
+        cmd = f"Edit Line.{line_name} R1={float(r1_ohm)}"
+        if x1_ohm is not None:
+            cmd += f" X1={float(x1_ohm)}"
+        if r0_ohm is not None:
+            cmd += f" R0={float(r0_ohm)}"
+        if x0_ohm is not None:
+            cmd += f" X0={float(x0_ohm)}"
+        dss.Text.Command(cmd)
+        dss.Lines.Name(line_name.lower())
+
 
     def run_fault_study(
         self,
@@ -358,7 +368,19 @@ class OpenDSSSolver:
                 isc3 = 0.0
 
             fault1 = f"tmp_fault1_{idx}"
-            dss.Text.Command(f"New Fault.{fault1} Bus1={bus_name}.1 phases=1 r=0")
+            # debug
+            # dss.Text.Command(f"New Fault.{fault1} Bus1={bus_name}.1 phases=1 r=0")
+            dss.Circuit.SetActiveBus(bus_name)
+            nodes = dss.Bus.Nodes()
+            phase_nodes = [n for n in nodes if int(n) in {1, 2, 3}]
+            if not phase_nodes:
+                buses_result[norm] = {"Isc3": 0.0, "Isc1": 0.0, "Vln_healthy_during_lg": {}}
+                continue
+            fault_node = int(phase_nodes[0])
+
+            fault1 = f"tmp_fault1_{idx}"
+            dss.Text.Command(f"New Fault.{fault1} Bus1={bus_name}.{fault_node} phases=1 r=0")
+            # debug
             dss.Text.Command("Solve")
             dss.Circuit.SetActiveElement(f"Fault.{fault1}")
             isc1 = self._magnitude_from_magang_vector(dss.CktElement.CurrentsMagAng())
@@ -437,7 +459,7 @@ class OpenDSSSolver:
                 healthy[f"V{phase}N_V"] = float(mags[mag_index])
         return healthy
 
-    def run_power_flow(self) -> Any:
+    def run_power_flow(self, nominal_voltage_v: float | None = None) -> Any:
         """Run power flow and return bus voltages.
 
         Returns:
@@ -475,6 +497,7 @@ class OpenDSSSolver:
             if not line_name:
                 continue
             dss.Circuit.SetActiveElement(f"Line.{line_name}")
+
             num_phases = int(dss.CktElement.NumPhases())
             currents = dss.CktElement.CurrentsMagAng()
             node_order = dss.CktElement.NodeOrder()
@@ -494,7 +517,8 @@ class OpenDSSSolver:
                 phase_currents[f"I{phase_no}_A"] = float(currents[mag_index])
             line_phase_currents_a[line_name] = phase_currents
 
-        nominal_voltage_v = max(bus_voltages_v.values()) if bus_voltages_v else 0.0
+        if nominal_voltage_v is None:
+            nominal_voltage_v = max(bus_voltages_v.values()) if bus_voltages_v else 0.0
         return {
             "nominal_voltage_v": float(nominal_voltage_v),
             "bus_voltages_v": bus_voltages_v,

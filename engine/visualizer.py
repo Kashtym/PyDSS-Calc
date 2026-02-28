@@ -37,19 +37,7 @@ def plot_tcc_curves(
     fault_currents: list[dict[str, float | str]] | None = None,
     project_name: str = "TCC Plot",
 ) -> str:
-    """Plot min/max TCC envelopes for multiple devices on one log-log chart.
-
-    Args:
-        devices_data: Items with keys: ``label``, ``In`` and ``tcc`` (UniversalTCC instance).
-        fault_currents: Optional items with keys: ``label``, ``current``.
-        project_name: Plot/report name. If it contains a path, parent is used as output directory.
-
-    Returns:
-        Absolute path to generated PNG file.
-    """
-
     fig, ax = plt.subplots(figsize=(11, 7))
-
     palette = plt.get_cmap("tab10")
     rendered: list[dict[str, Any]] = []
 
@@ -73,18 +61,10 @@ def plot_tcc_curves(
 
         color = palette(idx % 10)
         ax.fill_between(x_fill, y_min_fill, y_max_fill, color=color, alpha=0.3)
-        ax.step(x_min_arr, y_min_arr, where="post", color=color, linewidth=1.6, label=f"{label} min")
-        ax.step(x_max_arr, y_max_arr, where="post", color=color, linewidth=1.6, linestyle="--", label=f"{label} max")
+        ax.plot(x_min_arr, y_min_arr, color=color, linewidth=1.6, label=f"{label} min")
+        ax.plot(x_max_arr, y_max_arr, color=color, linewidth=1.6, linestyle="--", label=f"{label} max")
 
-        rendered.append(
-            {
-                "label": label,
-                "tcc": tcc,
-                "x_max": x_max_arr,
-                "y_max": y_max_arr,
-                "color": color,
-            }
-        )
+        rendered.append({"label": label, "tcc": tcc, "color": color})
 
     for fault in fault_currents or []:
         current = float(fault.get("current", 0.0))
@@ -118,15 +98,11 @@ def plot_tcc_curves(
     ax.legend(loc="best", fontsize=8)
 
     project_path = Path(project_name)
-    if project_path.parent != Path("."):
-        out_dir = project_path.parent
-        out_name = f"{_safe_slug(project_path.stem)}_tcc.png"
-    else:
-        out_dir = Path.cwd()
-        out_name = f"{_safe_slug(project_name)}_tcc.png"
-
+    out_dir = project_path.parent if project_path.parent != Path(".") else Path.cwd()
+    out_name = f"{_safe_slug(project_path.stem)}_tcc.png"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = (out_dir / out_name).resolve()
     fig.tight_layout()
     fig.savefig(out_path, dpi=160)
+    plt.close(fig)
     return str(out_path)
