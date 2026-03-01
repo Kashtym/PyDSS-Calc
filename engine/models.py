@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import acos, sqrt, tan
 from typing import Any
+import math
 
 
 _TEMP_COEFF_BY_MATERIAL = {
@@ -49,8 +50,19 @@ class LineModel:
         length = float(length_km)
         r20 = float(self.raw_cable["R20"])
         x1 = float(self.raw_cable.get("X1", 0.0))
-        r0 = float(self.raw_cable.get("R0", r20))
-        x0 = float(self.raw_cable.get("X0", x1))
+        
+        # Якщо R0 або X0 не задані (0.0), використовуємо коефіцієнт 3 для стабільності
+        r0_raw = float(self.raw_cable.get("R0", 0.0))
+        r0 = r0_raw if r0_raw > 0 else r20 * 3.0
+        
+        x0_raw = float(self.raw_cable.get("X0", 0.0))
+        x0 = x0_raw if x0_raw > 0 else x1 * 3.0
+        
+        # Гарантуємо, що значення не нульові (мінімальний поріг для чисельної стійкості)
+        x1 = max(x1, 1e-6)
+        x0 = max(x0, 1e-6)
+
+
         c1 = float(self.raw_cable.get("C1", 0.0))
 
         material = str(self.raw_cable.get("cond_material", "Cu")).strip().lower()
@@ -221,4 +233,85 @@ class SourceModel:
             "xneut_ohm": 0.0,
             "phases": int(self.phases),
             "phase": int(self.phase),
+        }
+
+@dataclass
+class TransformerModel:
+    """Two-winding transformer model for AC studies.
+
+    Args:
+        raw_transformer: Raw row from ``EquipmentManager.get_raw_transformer``.
+    """
+
+    raw_transformer: dict[str, Any]
+
+    def get_params(self) -> dict[str, Any]:
+        """Return transformer parameters for OpenDSS and report.
+
+        Returns impedances in Ohms referred to LV side,
+        plus OpenDSS-ready percent values.
+        """
+
+        raw = self.raw_transformer
+        sn_kva = float(raw["Sn"])
+        un_hv = float(raw["Un_HV"])
+        un_lv = float(raw["Un_LV"])
+        ukz_pct = float(raw["Ukz"])
+        pkz_kw = float(raw.get("Pkz", 0.0))
+        pnh_kw = float(raw.get("Pnh", 0.0))
+        i0_pct = float(raw.get("I0_pct", 0.0) or 0.0)
+        conn_hv = str(raw.get("Conn_HV", "D")).strip().upper()
+        conn_lv = str(raw.get("Conn_LV", "Y")).strip().upper()
+        windings = int(raw.get("Wind", 2))
+        i0_pct = raw.get("I0_pct", 0.0)
+        try:
+            i0_pct = float(i0_pct)
+            if not math.isfinite(i0_pct):
+                i0_pct = 0.0
+        except (TypeError, ValueError):
+            i0_pct = 0.0
+
+
+        # Базовые величины со стороны НН
+        i_base_lv = (sn_kva * 1000.0) / (sqrt(3.0) * un_lv * 1000.0)
+        z_base_lv = (un_lv * 1000.0) / (sqrt(3.0) * i_base_lv)
+
+        # Полное сопротивление КЗ
+        z_t = (ukz_pct / 100.0) * z_base_lv
+
+        # Активное сопротивление из потерь КЗ
+        r_t = (pkz_kw * 1000.0) / (3.0 * i_base_lv ** 2)
+
+        # Реактивное сопротивление
+        x_t = sqrt(max(z_t ** 2 - r_t ** 2, 0.0))
+
+        # %R и %X для OpenDSS (от мощности трансформатора)
+        pct_r = (r_t / z_base_lv) * 100.0
+        pct_x = (x_t / z_base_lv) * 100.0
+
+        # Схема соединения для OpenDSS: Y→wye, D→delta
+        conn_map = {"Y": "wye", "YN": "wye", "D": "delta"}
+        conn_hv_dss = conn_map.get(conn_hv, "wye")
+        conn_lv_dss = conn_map.get(conn_lv, "wye")
+        conn_hv = str(self.raw_transformer.get("Conn_HV", "Y")).strip() 
+        conn_lv = str(self.raw_transformer.get("Conn_LV", "Yn")).strip() 
+
+        return {
+            "windings": windings,
+            "sn_kva": sn_kva,
+            "un_hv_kv": un_hv,
+            "un_lv_kv": un_lv,
+            "conn_hv": conn_hv_dss,
+            "conn_lv": conn_lv_dss,
+            "conn_hv_raw": conn_hv, 
+            "conn_lv_raw": conn_lv,  
+            "ukz_pct": ukz_pct,
+            "pct_r": pct_r,
+            "pct_x": pct_x,
+            "pct_noloadloss": (pnh_kw / sn_kva) * 100.0,
+            "pct_imag": i0_pct,
+            # Сопротивления в омах (сторона НН) — для отчёта
+            "R_ohm_lv": r_t,
+            "X_ohm_lv": x_t,
+            "Z_ohm_lv": z_t,
         }

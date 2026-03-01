@@ -17,10 +17,11 @@ import yaml
 import traceback
 
 from engine.db_manager import EquipmentManager
-from engine.models import BatteryModel, LineModel, LoadModel, SourceModel
+from engine.models import BatteryModel, LineModel, LoadModel, SourceModel, TransformerModel
 from engine.protection_core import UniversalTCC
 from engine.solver import DSSSolver
 from engine.visualizer import plot_tcc_curves
+from engine.report import SubstationReport
 
 
 def _init_equipment_manager() -> EquipmentManager:
@@ -252,184 +253,6 @@ def _read_numeric(row: dict[str, Any], candidates: list[str], default: float | N
         return float(default)
     raise ValueError(f"Cannot parse numeric value from row for keys: {candidates}")
 
-
-def _write_report(
-    project_name: str,
-    mode: str,
-    battery_cfg: dict[str, Any],
-    battery_params: dict[str, Any],
-    source_cfg: dict[str, Any],
-    line_rows: list[dict[str, Any]],
-    fault: dict[str, Any],
-    power_flow: dict[str, Any],
-    source_bus: str,
-    load_bus: str,
-    yaml_path: str,
-    protection_rows: list[dict[str, Any]],
-) -> str:
-    yaml_file = Path(yaml_path)
-    output_dir = yaml_file.parent
-    if not output_dir.exists() or not output_dir.is_dir():
-        raise ValueError(f"Output directory does not exist: {output_dir}")
-
-    if not os.access(output_dir, os.W_OK):
-        raise PermissionError(f"Output directory is not writable: {output_dir}")
-
-    date_str = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    report_path = output_dir / f"{project_name}_report.txt"
-
-    bus_voltages: dict[str, float] = power_flow.get("bus_voltages_v", {})
-    bus_phase_voltages: dict[str, dict[str, float]] = power_flow.get("bus_phase_voltages_v", {})
-    line_phase_currents: dict[str, dict[str, float]] = power_flow.get("line_phase_currents_a", {})
-    nominal_v = float(power_flow.get("nominal_voltage_v", 0.0) or 0.0)
-
-    fault_rows_dc: list[tuple[str, float]] = []
-    fault_rows_ac: list[tuple[str, float, float]] = []
-    if mode == "AC" and isinstance(fault.get("buses"), dict):
-        buses_data = fault["buses"]
-        for bus in sorted(bus_voltages.keys()):
-            norm_bus = _safe_token(bus).lower()
-            row = buses_data.get(norm_bus, {})
-            isc3 = float(row.get("Isc3", 0.0))
-            isc1 = float(row.get("Isc1", 0.0))
-            fault_rows_ac.append((bus, isc3, isc1))
-    else:
-        fault_bus_values: dict[str, float] = {}
-        for key, value in fault.items():
-            if key in {"source_fault_current_a", "load_fault_current_a", "buses"}:
-                continue
-            if isinstance(value, (int, float)):
-                fault_bus_values[str(key)] = float(value)
-
-        for bus in sorted(bus_voltages.keys()):
-            norm_bus = _safe_token(bus).lower()
-            current = fault_bus_values.get(norm_bus, 0.0)
-            fault_rows_dc.append((bus, current))
-
-        if not fault_rows_dc:
-            fault_rows_dc = [
-                (source_bus, float(fault.get("source_fault_current_a", 0.0))),
-                (load_bus, float(fault.get("load_fault_current_a", 0.0))),
-            ]
-
-    try:
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(f"Project Name: {project_name}\n")
-            f.write(f"Date: {date_str}\n\n")
-
-            if mode == "DC":
-                f.write("Battery Configuration\n")
-                f.write("---------------------\n")
-                battery_id = battery_cfg.get("id", battery_cfg.get("model_id"))
-                f.write(f"ID: {battery_id}\n")
-                f.write(f"Cells: {battery_cfg.get('n_cells')}\n")
-                f.write(f"Jumpers (mOhm): {battery_cfg.get('jumpers_mohm', 0.5)}\n")
-                f.write(f"Total Voltage (V): {float(battery_params.get('U_total_V', 0.0)):.3f}\n")
-                f.write(f"Total Resistance (Ohm): {float(battery_params.get('R_total_ohm', 0.0)):.6f}\n\n")
-            else:
-                f.write("AC Source Configuration\n")
-                f.write("-----------------------\n")
-                f.write(f"BasekV: {float(source_cfg.get('basekv', 0.4)):.3f}\n")
-                isc3_cfg = source_cfg.get("isc3")
-                isc1_cfg = source_cfg.get("isc1")
-                if isc3_cfg is not None:
-                    f.write(f"Isc3 Source (A): {float(isc3_cfg):.3f}\n")
-                else:
-                    f.write(f"MVAsc3: {float(source_cfg.get('mvasc3', 0.0)):.3f}\n")
-                if isc1_cfg is not None:
-                    f.write(f"Isc1 Source (A): {float(isc1_cfg):.3f}\n")
-                else:
-                    f.write(f"MVAsc1: {float(source_cfg.get('mvasc1', 0.0)):.3f}\n")
-                xr_cfg = source_cfg.get("x_r_ratio", source_cfg.get("X1R1", 2.0))
-                f.write(f"Source pu: {float(source_cfg.get('pu', 1.0)):.3f}\n")
-                f.write(f"X/R ratio: {float(xr_cfg):.3f}\n")
-                f.write(f"Neutral Grounding: {source_cfg.get('neutral_grounding', 'grounded')}\n")
-                if source_cfg.get("neutral_grounding", "").lower() == "resistor_grounded":
-                    f.write(f"Rneutral (Ohm): {float(source_cfg.get('r_neutral_ohm', 0.0)):.3f}\n")
-                f.write("\n")
-
-            f.write("Lines\n")
-            f.write("-----\n")
-            for row in line_rows:
-                f.write(
-                    f"{row['name']}: {row['from_bus']} -> {row['to_bus']}, "
-                    f"R={row['R_ohm']:.6f} Ohm\n"
-                )
-            f.write("\n")
-
-            f.write("Normal Mode Currents\n")
-            f.write("--------------------------\n")
-
-            line_currents_lut = {str(k).lower(): v for k, v in line_phase_currents.items()}
-            if mode == "DC":
-                f.write("Line | I (A)\n")
-                for row in line_rows:
-                    line_name = str(row["name"])
-                    phase_i = line_phase_currents.get(line_name, line_currents_lut.get(line_name.lower(), {}))
-                    i = float(phase_i.get("I1_A", 0.0))
-                    f.write(f"{line_name} | {i:.3f}\n")
-            else:
-                f.write("Line | I1 (A) | I2 (A) | I3 (A) | Imax (A)\n")
-                for row in line_rows:
-                    line_name = str(row["name"])
-                    phase_i = line_phase_currents.get(line_name, line_currents_lut.get(line_name.lower(), {}))
-                    i1 = float(phase_i.get("I1_A", 0.0))
-                    i2 = float(phase_i.get("I2_A", 0.0))
-                    i3 = float(phase_i.get("I3_A", 0.0))
-                    imax = max(i1, i2, i3)
-                    f.write(f"{line_name} | {i1:.3f} | {i2:.3f} | {i3:.3f} | {imax:.3f}\n")
-            f.write("\n")
-
-
-            f.write("Voltage Profile\n")
-            f.write("---------------\n")
-            if mode == "AC":
-                f.write("Bus Name | V1N (V) | V2N (V) | V3N (V) | Max Drop (%)\n")
-                for bus in sorted(bus_voltages.keys()):
-                    phase_v = bus_phase_voltages.get(bus, {})
-                    v1 = float(phase_v.get("V1N_V", 0.0))
-                    v2 = float(phase_v.get("V2N_V", 0.0))
-                    v3 = float(phase_v.get("V3N_V", 0.0))
-                    vmax = max(v1, v2, v3)
-                    drop = ((nominal_v - vmax) / nominal_v * 100.0) if nominal_v > 0 else 0.0
-                    f.write(f"{bus} | {v1:.3f} | {v2:.3f} | {v3:.3f} | {drop:.3f}\n")
-            else:
-                nominal_220 = 220.0
-                f.write("Bus Name | Voltage (V) | Voltage (%) | Voltage Drop (V) | Voltage Drop (%)\n")
-                for bus, voltage in sorted(bus_voltages.items()):
-                    voltage_pct = (voltage / nominal_220 * 100.0)
-                    drop_v = nominal_v - voltage
-                    drop_pct = (drop_v / nominal_v * 100.0) if nominal_v > 0 else 0.0
-                    f.write(f"{bus} | {voltage:.3f} | {voltage_pct:.1f} | {drop_v:.3f} | {drop_pct:.3f}\n")
-
-            f.write("\n")
-            f.write("Fault Currents\n")
-            f.write("--------------\n")
-            if mode == "AC":
-                f.write("Bus Name | Isc3 (A) | Isc1 (A)\n")
-                for bus, isc3, isc1 in fault_rows_ac:
-                    f.write(f"{bus} | {isc3:.3f} | {isc1:.3f}\n")
-            else:
-                f.write("Bus Name | I_sc (Amperes)\n")
-                for bus, current in fault_rows_dc:
-                    f.write(f"{bus} | {current:.3f}\n")
-
-            if protection_rows:
-                f.write("\n")
-                f.write("Protection Summary\n")
-                f.write("------------------\n")
-                f.write("Type | Device ID | Bus | I_sc (A) | t_min (s) | t_max (s)\n")
-                for row in protection_rows:
-                    f.write(
-                        f"{row['device_type']} | {row['device_id']} | {row['bus']} | {row['fault_current_a']:.3f} | "
-                        f"{row['trip_time_min_s']:.6f} | {row['trip_time_max_s']:.6f}\n"
-                    )
-    except OSError as exc:
-        raise OSError(f"Failed to write report in '{output_dir}': {exc}") from exc
-
-    return str(report_path.resolve())
-
-
 def run(project_path: str) -> str:
     project = _load_project(project_path)
     manager = _init_equipment_manager()
@@ -541,6 +364,46 @@ def run(project_path: str) -> str:
     known_line_buses: list[tuple[str, str]] = []
 
     for i, item in enumerate(topology, start=1):
+
+        bus_nominal_kv: dict[str, float] = {}
+        item_type = str(item.get("type", "line")).lower()
+
+        if item_type == "transformer":
+            tr_id = _resolve_id(
+                str(item["transformer_id"]),
+                manager.get_all_transformer_ids(),
+                "Transformers",
+            )
+            from_bus = _safe_token(str(item["from_bus"]))
+            to_bus = _safe_token(str(item["to_bus"]))
+            tr_name = _safe_token(str(item.get("name", f"T{i}")))
+
+            raw_tr = manager.get_raw_transformer(tr_id)
+            tr_model = TransformerModel(raw_tr)
+            tr_params = tr_model.get_params()
+
+            solver.add_element(
+                tr_model,
+                name=tr_name,
+                bus_hv=from_bus,
+                bus_lv=to_bus,
+            )
+
+            # Добавляем в line_rows для отчёта
+            line_rows.append({
+                "name": tr_name,
+                "from_bus": str(item["from_bus"]),
+                "to_bus": str(item["to_bus"]),
+                "R_ohm": tr_params["R_ohm_lv"],
+                "X_ohm": tr_params["X_ohm_lv"],
+                "C_nf": 0.0,
+            })
+            known_line_buses.append((to_bus, str(item["to_bus"])))
+
+            bus_nominal_kv[from_bus] = float(tr_params["un_hv_kv"])
+            bus_nominal_kv[to_bus] = float(tr_params["un_lv_kv"])
+            continue
+
         cable_id = _resolve_id(str(item["cable_id"]), manager.get_all_cable_ids(), "Cables")
         from_bus_raw = str(item["from_bus"])
         to_bus_raw = str(item["to_bus"])
@@ -691,29 +554,11 @@ def run(project_path: str) -> str:
             }
         )
         known_line_buses.append((to_bus, to_bus_raw))
+        bus_nominal_kv[from_bus] = default_voltage_kv
+        bus_nominal_kv[to_bus] = default_voltage_kv
 
     for idx, load_item in enumerate(load_items, start=1):
 
-
-        load_phases = int(load_item.get("phases", 1 if mode == "DC" else 3))
-
-        if "voltage_kv" in load_item:
-            load_voltage_kv = float(load_item["voltage_kv"])
-        elif mode == "DC":
-            if default_voltage_kv > 0:
-                load_voltage_kv = default_voltage_kv
-            else: 
-                load_voltage_kv = source_base_kv
-        elif mode == "AC" and load_phases == 1:
-            load_voltage_kv = source_base_kv / sqrt(3.0)  # 0.4/√3 = 0.231 В
-        else:
-            load_voltage_kv = source_base_kv
-
-        load_model = LoadModel(
-            power_kw=float(load_item.get("power_kw", 0.0)),
-            voltage_kv=load_voltage_kv,
-            pf=float(load_item.get("pf", 1.0)),
-        )
 
         load_name = _safe_token(str(load_item.get("name", f"LD{idx}")))
         load_bus_raw = str(load_item.get("bus", line_rows[-1]["to_bus"] if line_rows else "LoadBus"))
@@ -730,6 +575,22 @@ def run(project_path: str) -> str:
                     load_bus_raw = candidates[0][1]
 
         load_phases = int(load_item.get("phases", 1 if mode == "DC" else 3))
+
+        if "voltage_kv" in load_item:
+            load_voltage_kv = float(load_item["voltage_kv"])
+        elif mode == "DC":
+            load_voltage_kv = default_voltage_kv if default_voltage_kv > 0 else source_kv
+        else:
+            load_voltage_kv = bus_nominal_kv.get(load_bus, source_base_kv)
+            if load_phases == 1:
+                load_voltage_kv = load_voltage_kv / sqrt(3.0)
+
+        load_model = LoadModel(
+            power_kw=float(load_item.get("power_kw", 0.0)),
+            voltage_kv=load_voltage_kv,
+            pf=float(load_item.get("pf", 1.0)),
+        )
+
 
 
         load_phase = int(load_item.get("phase", 1))
@@ -834,20 +695,22 @@ def run(project_path: str) -> str:
             # Do not fail project calculation if plot generation has issues.
             pass
 
-    return _write_report(
+    from engine.report import SubstationReport
+    report = SubstationReport(
         project_name=project_name,
         mode=mode,
+        source_cfg=source_cfg,
         battery_cfg=battery_cfg,
         battery_params=battery_params,
-        source_cfg=source_cfg,
         line_rows=line_rows,
         fault=fault_results,
         power_flow=power_flow_results,
         source_bus=source_bus,
         load_bus=load_bus,
-        yaml_path=project_path,
         protection_rows=protection_rows,
     )
+    report_path = str(Path(project_path).parent / f"{project_name}_report.txt")
+    return report.write(report_path)
 
 
 def main() -> int:

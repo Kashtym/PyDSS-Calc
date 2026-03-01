@@ -1,0 +1,75 @@
+project_name: "Substation_Panel"
+calculation_mode: "AC"
+frequency: 50
+temperature: 20
+
+source:
+    type: "Vsource"
+    basekv: 6 # Лінійна напруга
+    isc3: 10000 # Струм 3-фазного КЗ на шинах
+    pu: 1.0 # Уновень напряжения
+    X1R1: 10.0 # Соотношение X/R
+    neutral_grounding: "Isolated" # Изолированная нейтраль (0.4 кВ)
+
+topology:
+    - name: "1W1"
+      from_bus: "1B1 SourceBus"
+      to_bus: "1B2 TP HV Bus"
+      cable_id: "AABL_3х120_6" # Обов'язково має бути в library.ods
+      length_km: 2.5 # Довжина
+      phases: 3
+    #   Автомат захисту буде пристрій релейного захисту з уставками. Додамо пізніше після розрахунків
+
+    - type: "transformer"
+      name: "T1"
+      transformer_id: "TM_630/6_D/Yn-11"
+      from_bus: "1B2 TP HV Bus"
+      to_bus: "2B1 TP LV Main Bus"
+    # Высоковольтний запобіжник. Додамо пізніше після розрахунків
+
+    - name: "2W1"
+      from_bus: "2B1 TP LV Main Bus"
+      to_bus: "2B2 Light_Panel 1"
+      cable_id: "VVGng_2х6"
+      length_km: 0.1
+      fuse_id: "PNA000_10A_2P"
+      phases: 3
+
+    - name: "2W2"
+      from_bus: "2B1 TP LV Main Bus"
+      to_bus: "2B3 Light_Panel 1"
+      cable_id: "VVGng_2х4"
+      length_km: 0.1
+      breaker_id: "C60H-DC_2A_2P_C"
+      phases: 3
+
+    - name: "2W3"
+      from_bus: "2B1 TP LV Main Bus"
+      to_bus: "2B4 Light_Panel 1"
+      cable_id: "VVGng_2х2,5"
+      length_km: 1.0
+      breaker_id: "C60H-DC_6A_2P_C"
+      phases: 1
+      phase: 3 #C
+
+load:
+    - name: "L1 load"
+      bus: "2B2 Light_Panel 1"
+      power_kw: 30
+      pf: 0.9
+      phases: 3 # трёхфазная нагрузка
+
+    - name: "L2 load"
+      bus: "2B3 Light_Panel 1"
+      power_kw: 1
+      pf: 0.9
+      phases: 1
+      phase: 2 #B
+
+    - name: "L3 load"
+      bus: "2B4 Light_Panel 1"
+      power_kw: 1
+      pf: 0.9
+      phases: 1
+      phase: 3 #C
+      # voltage_kv: 0.23 необязательно, если нужно переопределить

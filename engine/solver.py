@@ -7,7 +7,7 @@ import math
 import re
 from typing import Any
 
-from engine.models import BatteryModel, LineModel, LoadModel, SourceModel
+from engine.models import BatteryModel, LineModel, LoadModel, SourceModel, TransformerModel
 
 
 class OpenDSSSolver:
@@ -29,46 +29,87 @@ class OpenDSSSolver:
             self._dss = importlib.import_module("opendssdirect")
         return self._dss
 
+    # def setup_simulation(
+    #     self,
+    #     mode: str = "DC",
+    #     frequency: float = 50.0,
+    #     source_base_kv: float = 0.22,
+    #     voltage_bases_kv: list[float] | None = None,
+    # ) -> None:
+    #     """Initialize simulation mode and base OpenDSS settings.
+
+    #     Args:
+    #         mode: ``DC`` or ``AC``.
+    #         frequency: Frequency for AC mode (defaults to 50 Hz).
+    #     """
+
+    #     normalized_mode = str(mode).strip().upper()
+    #     if normalized_mode not in {"DC", "AC"}:
+    #         raise ValueError("mode must be either 'DC' or 'AC'")
+
+    #     self.mode = normalized_mode
+    #     self.frequency_hz = 0.001 if self.mode == "DC" else float(frequency)
+    #     self.default_phases = 1 if self.mode == "DC" else 3
+
+    #     dss = self._get_dss()
+    #     dss.Basic.ClearAll()
+    #     dss.Text.Command("Clear")
+    #     circuit_phases = 1 if self.mode == "DC" else self.default_phases
+    #     dss.Text.Command(
+    #         f"New Circuit.Main Phases={circuit_phases} BasekV={float(source_base_kv)} pu=1.0 frequency={self.frequency_hz}"
+    #     )
+    #     dss.Text.Command(f"Set DefaultBaseFrequency={self.frequency_hz}")
+    #     dss.Text.Command(f"Set Frequency={self.frequency_hz}")
+
+    #     if self.mode == "AC":
+    #         vbases = voltage_bases_kv or [float(source_base_kv), 0.4, 0.23]
+    #         try:
+    #             dss.Settings.VoltageBases(vbases)
+    #         except Exception:
+    #             joined = ", ".join(str(v) for v in vbases)
+    #             dss.Text.Command(f"Set VoltageBases=[{joined}]")
+    #         dss.Text.Command("CalcVoltageBases")
+
     def setup_simulation(
         self,
-        mode: str = "DC",
+        mode: str = "AC",
         frequency: float = 50.0,
         source_base_kv: float = 0.22,
         voltage_bases_kv: list[float] | None = None,
+        source_bus: str = "SourceBus",
     ) -> None:
-        """Initialize simulation mode and base OpenDSS settings.
-
-        Args:
-            mode: ``DC`` or ``AC``.
-            frequency: Frequency for AC mode (defaults to 50 Hz).
-        """
-
         normalized_mode = str(mode).strip().upper()
-        if normalized_mode not in {"DC", "AC"}:
-            raise ValueError("mode must be either 'DC' or 'AC'")
-
         self.mode = normalized_mode
         self.frequency_hz = 0.001 if self.mode == "DC" else float(frequency)
-        self.default_phases = 1 if self.mode == "DC" else 3
-
+        
         dss = self._get_dss()
         dss.Basic.ClearAll()
         dss.Text.Command("Clear")
-        circuit_phases = 1 if self.mode == "DC" else self.default_phases
-        dss.Text.Command(
-            f"New Circuit.Main Phases={circuit_phases} BasekV={float(source_base_kv)} pu=1.0 frequency={self.frequency_hz}"
-        )
+
+        # 1. КРИТИЧНО: Встановлюємо дефолтну частоту ДО створення Circuit
         dss.Text.Command(f"Set DefaultBaseFrequency={self.frequency_hz}")
+
+        circuit_phases = 1 if self.mode == "DC" else 3
+        
+        # 2. Створюємо Circuit (тепер він підхопить DefaultBaseFrequency для Vsource.Source)
+        dss.Text.Command(
+            f"New Circuit.Main Phases={circuit_phases} BasekV={float(source_base_kv)} "
+            f"Bus1={source_bus} pu=1.0"
+        )
+        
+        # 3. Додатково фіксуємо частоту для поточного сеансу
         dss.Text.Command(f"Set Frequency={self.frequency_hz}")
 
         if self.mode == "AC":
+            # Формуємо список баз напруг
             vbases = voltage_bases_kv or [float(source_base_kv), 0.4, 0.23]
-            try:
-                dss.Settings.VoltageBases(vbases)
-            except Exception:
-                joined = ", ".join(str(v) for v in vbases)
-                dss.Text.Command(f"Set VoltageBases=[{joined}]")
+            # Додаємо унікальні значення та сортуємо (OpenDSS це любить)
+            vbases = sorted(list(set(vbases)), reverse=True)
+            
+            joined = ", ".join(str(v) for v in vbases)
+            dss.Text.Command(f"Set VoltageBases=[{joined}]")
             dss.Text.Command("CalcVoltageBases")
+
 
     def build_circuit(
         self,
@@ -115,6 +156,8 @@ class OpenDSSSolver:
             return self._add_source(element_model, **kwargs)
         if isinstance(element_model, LoadModel):
             return self._add_load(element_model, **kwargs)
+        if isinstance(element_model, TransformerModel):
+            return self._add_transformer(element_model, **kwargs)
 
         raise TypeError("Unsupported element_model type")
 
@@ -275,6 +318,132 @@ class OpenDSSSolver:
         dss.Text.Command(command)
         return f"Load.{name}"
 
+    # def _add_transformer(self, model: TransformerModel, **kwargs: Any) -> str:
+    #     if self.mode != "AC":
+    #         raise ValueError("TransformerModel is supported only in AC mode")
+
+    #     bus_hv = kwargs["bus_hv"]
+    #     bus_lv = kwargs["bus_lv"]
+    #     name = kwargs.get("name", self._next_name("T"))
+    #     p = model.get_params()
+
+    #     dss = self._get_dss()
+
+    #     xhl = p['pct_x'] / 100.0
+
+    #     dss.Text.Command(
+    #         f"New Transformer.{name} Phases=3 Windings={p['windings']} "
+    #         f"XHL={xhl:.6f} "
+    #         f"%Noloadloss={p['pct_noloadloss']:.4f} "
+    #         f"%Imag={p['pct_imag']:.4f}"
+    #     )
+    #     dss.Text.Command(
+    #         f"Edit Transformer.{name} Wdg=1 Bus={bus_hv} "
+    #         f"kV={p['un_hv_kv']} kVA={p['sn_kva']} "
+    #         f"%R={p['pct_r']:.4f} Conn={p['conn_hv']}"
+    #     )
+    #     # Если HV соединение Y (не Yn) — изолируем нейтраль
+    #     # if p.get('conn_hv_raw', '').upper() == 'Y':
+    #     #     dss.Text.Command(f"Edit Transformer.{name} Wdg=1 Rneut=-1 Xneut=0")
+    #     #     print(f"[DBG TR] Setting Wdg1 Rneut=-1")
+        
+    #     # dss.Text.Command(
+    #     #     f"Edit Transformer.{name} Wdg=2 Bus={bus_lv} "
+    #     #     f"kV={p['un_lv_kv']} kVA={p['sn_kva']} "
+    #     #     f"%R={p['pct_r']:.4f} Conn={p['conn_lv']}"
+    #     # )
+    #     # Обробка HV (сторона 1)
+    #     hv_conn = p.get('conn_hv', 'Wye')
+    #     hv_rneut = "10000000" if p.get('conn_hv_raw', '').upper() == 'Y' else "0"
+    #     hv_xneut = "0"
+
+    #     dss.Text.Command(
+    #         f"Edit Transformer.{name} Wdg=1 Bus={bus_hv} "
+    #         f"kV={p['un_hv_kv']} kVA={p['sn_kva']} "
+    #         f"%R={p['pct_r']:.4f} Conn={hv_conn} "
+    #         f"Rneut={hv_rneut} Xneut={hv_xneut}"
+    #     )
+
+    #     # Если LV соединение Yn — заземляем нейтраль
+    #     # if p.get('conn_lv_raw', '').upper() == 'YN':
+    #     #     dss.Text.Command(f"Edit Transformer.{name} Wdg=2 Rneut=0 Xneut=0")
+    #     #     print(f"[DBG TR] Setting Wdg2 Rneut=0")
+    #      # Обробка LV (сторона 2)
+    #     lv_conn = p.get('conn_lv', 'Wye')
+    #     # Якщо Yn — заземляємо (Rneut=0), якщо Y — ізолюємо (10^7)
+    #     lv_rneut = "0" if p.get('conn_lv_raw', '').upper() == 'YN' else "10000000"
+    #     lv_xneut = "0"
+
+    #     dss.Text.Command(
+    #         f"Edit Transformer.{name} Wdg=2 Bus={bus_lv} "
+    #         f"kV={p['un_lv_kv']} kVA={p['sn_kva']} "
+    #         f"%R={p['pct_r']:.4f} Conn={lv_conn} "
+    #         f"Rneut={lv_rneut} Xneut={lv_xneut}"
+    #     )
+
+    #     try:
+    #         current_bases = list(dss.Settings.VoltageBases())
+    #         lv_kv = float(p["un_lv_kv"])
+    #         if lv_kv not in current_bases:
+    #             current_bases.append(lv_kv)
+    #             dss.Settings.VoltageBases(current_bases)
+    #     except Exception:
+    #         pass
+    #     dss.Text.Command("CalcVoltageBases")
+
+    def _add_transformer(self, model: TransformerModel, **kwargs: Any) -> str:
+        if self.mode != "AC":
+            raise ValueError("TransformerModel is supported only in AC mode")
+
+        bus_hv = kwargs["bus_hv"]
+        bus_lv = kwargs["bus_lv"]
+        name = kwargs.get("name", self._next_name("T"))
+        p = model.get_params()
+        dss = self._get_dss()
+
+        # OpenDSS очікує XHL у відсотках
+        xhl = p['pct_x']
+
+        dss.Text.Command(
+            f"New Transformer.{name} Phases=3 Windings={p['windings']} "
+            f"XHL={xhl:.6f} %Noloadloss={p['pct_noloadloss']:.4f} %Imag={p['pct_imag']:.4f}"
+        )
+
+        # Обробка HV обмотки
+        hv_conn_raw = p.get('conn_hv_raw', '').upper()
+        # Якщо 'Y' (ізольована), підключаємо нейтраль до вузла 4, а не 0
+        hv_bus_conn = f"{bus_hv}.1.2.3.4" if hv_conn_raw == 'Y' else f"{bus_hv}.1.2.3.0"
+        hv_rneut = 10**7 if hv_conn_raw == 'Y' else 0
+
+        dss.Text.Command(
+            f"Edit Transformer.{name} Wdg=1 Bus={hv_bus_conn} "
+            f"kV={p['un_hv_kv']} kVA={p['sn_kva']} %R={p['pct_r']:.4f} "
+            f"Conn={p['conn_hv']} Rneut={hv_rneut} Xneut=0"
+        )
+
+        # Обробка LV обмотки
+        lv_conn_raw = p.get('conn_lv_raw', '').upper()
+        # Якщо 'Y' (ізольована), аналогічно відриваємо від вузла 0
+        lv_bus_conn = f"{bus_lv}.1.2.3.4" if lv_conn_raw == 'Y' else f"{bus_lv}.1.2.3.0"
+        lv_rneut = 10**7 if lv_conn_raw == 'Y' else 0
+
+        dss.Text.Command(
+            f"Edit Transformer.{name} Wdg=2 Bus={lv_bus_conn} "
+            f"kV={p['un_lv_kv']} kVA={p['sn_kva']} %R={p['pct_r']:.4f} "
+            f"Conn={p['conn_lv']} Rneut={lv_rneut} Xneut=0"
+        )
+
+        # Оновлення баз напруг
+        try:
+            current_bases = set(dss.Settings.VoltageBases())
+            current_bases.update([float(p["un_hv_kv"]), float(p["un_lv_kv"])])
+            dss.Settings.VoltageBases(list(current_bases))
+            dss.Text.Command("CalcVoltageBases")
+        except Exception:
+            pass
+
+        return f"Transformer.{name}"
+    
     def _next_name(self, prefix: str) -> str:
         self._counter += 1
         return f"{prefix}{self._counter}"
@@ -368,8 +537,7 @@ class OpenDSSSolver:
                 isc3 = 0.0
 
             fault1 = f"tmp_fault1_{idx}"
-            # debug
-            # dss.Text.Command(f"New Fault.{fault1} Bus1={bus_name}.1 phases=1 r=0")
+         
             dss.Circuit.SetActiveBus(bus_name)
             nodes = dss.Bus.Nodes()
             phase_nodes = [n for n in nodes if int(n) in {1, 2, 3}]
@@ -380,7 +548,7 @@ class OpenDSSSolver:
 
             fault1 = f"tmp_fault1_{idx}"
             dss.Text.Command(f"New Fault.{fault1} Bus1={bus_name}.{fault_node} phases=1 r=0")
-            # debug
+
             dss.Text.Command("Solve")
             dss.Circuit.SetActiveElement(f"Fault.{fault1}")
             isc1 = self._magnitude_from_magang_vector(dss.CktElement.CurrentsMagAng())
@@ -516,6 +684,30 @@ class OpenDSSSolver:
                         phase_no = node
                 phase_currents[f"I{phase_no}_A"] = float(currents[mag_index])
             line_phase_currents_a[line_name] = phase_currents
+
+        # Токи трансформаторов
+        for tr_name in dss.Transformers.AllNames():
+            if not tr_name:
+                continue
+            dss.Circuit.SetActiveElement(f"Transformer.{tr_name}")
+            num_phases = int(dss.CktElement.NumPhases())
+            currents = dss.CktElement.CurrentsMagAng()
+            node_order = dss.CktElement.NodeOrder()
+            if not currents or num_phases <= 0:
+                continue
+            phase_currents = {"I1_A": 0.0, "I2_A": 0.0, "I3_A": 0.0}
+            for ph in range(min(num_phases, 3)):
+                mag_index = ph * 2
+                if mag_index >= len(currents):
+                    break
+                phase_no = ph + 1
+                if node_order and ph < len(node_order):
+                    node = int(node_order[ph])
+                    if node in {1, 2, 3}:
+                        phase_no = node
+                phase_currents[f"I{phase_no}_A"] = float(currents[mag_index])
+            line_phase_currents_a[tr_name] = phase_currents
+
 
         if nominal_voltage_v is None:
             nominal_voltage_v = max(bus_voltages_v.values()) if bus_voltages_v else 0.0
