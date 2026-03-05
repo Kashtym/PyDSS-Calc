@@ -6,6 +6,14 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 
+from engine.constants import (
+    TCC_PLOT_I_MAX_A,
+    TCC_PLOT_I_MIN_A,
+    TCC_PLOT_POINTS,
+    TCC_PLOT_TIME_MAX_S,
+    TCC_PLOT_TIME_MIN_S,
+)
+
 
 def _safe_slug(name: str) -> str:
     clean = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in str(name))
@@ -47,15 +55,15 @@ def plot_tcc_curves(
         if tcc is None:
             continue
 
-        x_min, y_min = tcc.get_plot_points(mode="min", i_min=1.0, i_max=10000.0)
-        x_max, y_max = tcc.get_plot_points(mode="max", i_min=1.0, i_max=10000.0)
+        x_min, y_min = tcc.get_plot_points(mode="min", i_min=TCC_PLOT_I_MIN_A, i_max=TCC_PLOT_I_MAX_A)
+        x_max, y_max = tcc.get_plot_points(mode="max", i_min=TCC_PLOT_I_MIN_A, i_max=TCC_PLOT_I_MAX_A)
 
         x_min_arr = np.asarray(x_min, dtype=float)
         y_min_arr = np.asarray(y_min, dtype=float)
         x_max_arr = np.asarray(x_max, dtype=float)
         y_max_arr = np.asarray(y_max, dtype=float)
 
-        x_fill = np.logspace(np.log10(1.0), np.log10(10000.0), 700)
+        x_fill = np.logspace(np.log10(TCC_PLOT_I_MIN_A), np.log10(TCC_PLOT_I_MAX_A), TCC_PLOT_POINTS)
         y_min_fill = _interp_loglog(x_min_arr, y_min_arr, x_fill)
         y_max_fill = _interp_loglog(x_max_arr, y_max_arr, x_fill)
 
@@ -89,8 +97,8 @@ def plot_tcc_curves(
 
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlim(1, 10000)
-    ax.set_ylim(0.001, 1000)
+    ax.set_xlim(TCC_PLOT_I_MIN_A, TCC_PLOT_I_MAX_A)
+    ax.set_ylim(TCC_PLOT_TIME_MIN_S, TCC_PLOT_TIME_MAX_S)
     ax.set_xlabel("Current (A)")
     ax.set_ylabel("Trip Time (s)")
     ax.set_title(str(project_name))

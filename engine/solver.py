@@ -7,6 +7,7 @@ import math
 import re
 from typing import Any
 
+from engine.constants import DC_EQUIVALENT_FREQUENCY_HZ, DEFAULT_FAULT_RESISTANCE_OHM
 from engine.models import BatteryModel, LineModel, LoadModel, SourceModel, TransformerModel
 
 
@@ -15,7 +16,7 @@ class OpenDSSSolver:
 
     def __init__(self) -> None:
         self.mode = "DC"
-        self.frequency_hz = 0.001
+        self.frequency_hz = DC_EQUIVALENT_FREQUENCY_HZ
         self.default_phases = 1
         self._counter = 0
         self._dss = None
@@ -80,7 +81,7 @@ class OpenDSSSolver:
     ) -> None:
         normalized_mode = str(mode).strip().upper()
         self.mode = normalized_mode
-        self.frequency_hz = 0.001 if self.mode == "DC" else float(frequency)
+        self.frequency_hz = DC_EQUIVALENT_FREQUENCY_HZ if self.mode == "DC" else float(frequency)
         
         dss = self._get_dss()
         dss.Basic.ClearAll()
@@ -472,7 +473,7 @@ class OpenDSSSolver:
         self,
         source_bus: str = "SourceBus",
         load_bus: str = "LoadBus",
-        fault_resistance_ohm: float = 0.001,
+        fault_resistance_ohm: float = DEFAULT_FAULT_RESISTANCE_OHM,
     ) -> dict[str, Any]:
         """Run all-node fault study and return short-circuit currents per bus.
 

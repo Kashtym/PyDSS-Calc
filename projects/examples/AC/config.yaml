@@ -18,58 +18,114 @@ topology:
       cable_id: "AABL_3х120_6" # Обов'язково має бути в library.ods
       length_km: 2.5 # Довжина
       phases: 3
-    #   Автомат захисту буде пристрій релейного захисту з уставками. Додамо пізніше після розрахунків
+      protection_settings:
+          name: "Relay 1W1"
+          type: Relay
+          L_stage:
+              active: true
+              mode: iec_inverse
+              curve_type: standard_inverse
+              I1_A: 1000
+              t1_s: 0.5
+          S_stage:
+              active: true
+              mode: flat
+              I2_A: 4000
+              t2_s: 0.1
+          I_stage:
 
     - type: "transformer"
       name: "T1"
       transformer_id: "TM_630/6_D/Yn-11"
       from_bus: "1B2 TP HV Bus"
-      to_bus: "2B1 TP LV Main Bus"
-    # Высоковольтний запобіжник. Додамо пізніше після розрахунків
+      to_bus: "2B1 TP LV Bus"
 
     - name: "2W1"
-      from_bus: "2B1 TP LV Main Bus"
-      to_bus: "2B2 Light_Panel 1"
-      cable_id: "VVGng_2х6"
-      length_km: 0.1
-      fuse_id: "PNA000_10A_2P"
+      from_bus: "2B1 TP LV Bus"
+      to_bus: "2B2 Main Bus"
+      cable_id: "VVGng_2x240"
+      length_km: 0.05
       phases: 3
+      protection_settings:
+          name: "QF1"
+          type: Breaker
+          breaker_id: "NSX630N_3P_ML_5.3_630A"
+          L_stage:
+              active: true
+              Ir: 0.8
+              tr: 16.0
+          S_stage:
+              active: true
+              mode: i2t_off
+              Isd: 5.0
+              tsd: 0.4
+          I_stage:
+              active: true
+              Ii: 10.0
 
     - name: "2W2"
-      from_bus: "2B1 TP LV Main Bus"
+      from_bus: "2B2 Main Bus"
       to_bus: "2B3 Light_Panel 1"
-      cable_id: "VVGng_2х4"
+      cable_id: "VVGng_2х16"
       length_km: 0.1
-      breaker_id: "C60H-DC_2A_2P_C"
       phases: 3
+      protection_settings:
+          name: "QF2"
+          type: Breaker
+          breaker_id: "NSX100B_3P_ML_2.2_40A"
+          L_stage:
+              active: true
+              Ir: 0.8
+          S_stage:
+              active: true
+              Isd: 5.0
+          I_stage:
 
     - name: "2W3"
-      from_bus: "2B1 TP LV Main Bus"
-      to_bus: "2B4 Light_Panel 1"
-      cable_id: "VVGng_2х2,5"
-      length_km: 1.0
-      breaker_id: "C60H-DC_6A_2P_C"
+      from_bus: "2B2 Main Bus"
+      to_bus: "2B4 Light_Panel 2"
+      cable_id: "VVGng_2х6"
+      length_km: 0.1
+      phases: 3
+      protection_settings:
+          name: "QF3"
+          type: Breaker
+          breaker_id: "NSX100B_3P_TM16D"
+          L_stage:
+              active: true
+              Ir: 0.7
+          S_stage:
+          I_stage:
+
+    - name: "2W4"
+      from_bus: "2B2 Main Bus"
+      to_bus: "2B5 Light_Panel 3"
+      cable_id: "VVGng_2х6"
+      length_km: 0.05
       phases: 1
       phase: 3 #C
+      protection_settings:
+          name: "FU1"
+          type: Fuse
+          fuse_id: "PNA000_10A_2P"
 
 load:
     - name: "L1 load"
-      bus: "2B2 Light_Panel 1"
+      bus: "2B3 Light_Panel 1"
       power_kw: 30
       pf: 0.9
       phases: 3 # трёхфазная нагрузка
 
     - name: "L2 load"
-      bus: "2B3 Light_Panel 1"
-      power_kw: 1
+      bus: "2B4 Light_Panel 2"
+      power_kw: 10
       pf: 0.9
       phases: 1
       phase: 2 #B
 
     - name: "L3 load"
-      bus: "2B4 Light_Panel 1"
-      power_kw: 1
+      bus: "2B5 Light_Panel 3"
+      power_kw: 10
       pf: 0.9
       phases: 1
       phase: 3 #C
-      # voltage_kv: 0.23 необязательно, если нужно переопределить

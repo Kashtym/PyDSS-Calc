@@ -29,3 +29,32 @@ Contains parameters for 2V battery cells (units to be scaled by N_cells in code)
 -   **U_nom**: Nominal cell voltage [V] (typically 2V).
 -   **Ri_cell**: Internal resistance per cell [mOhm] (Critical for SC calc).
 -   **I_sc_cell**: Manufacturer-stated short-circuit current [A].
+
+### Sheet 3: `CircuitBreakersCatalog`
+
+Stores fixed physical breaker properties and links to trip logic.
+
+-   **ID**: Breaker model ID (e.g., `NSX630N_3P_ML_5.3_630A`).
+-   **TripUnit_ID**: Foreign key to `TripUnitsCatalog.Unique name`.
+-   **In**: Nominal current [A].
+-   **Poles**: Number of poles.
+-   **P_loss_W**: Active power loss at nominal current [W].
+-   **Icu_kA**: Ultimate breaking capacity [kA].
+
+### Sheet 4: `TripUnitsCatalog`
+
+Stores trip unit logic and default setting ranges.
+
+-   **Unique name**: Trip unit profile ID.
+-   **Type of L zone**: `Table`, `Formula`, `None`.
+-   **Min/Max curve using the table**: CSV paths for L-zone envelope.
+-   **coefficient for calculation using the formula**: `Kl` for L-formula.
+-   **Min from Ir=In*...**: allowed `Ir` values/range.
+-   **Time tr L zone ...**: allowed `tr` values/range.
+-   **L zone time accuracy ...**: time tolerance `[-x, +y]` for min/max curves.
+-   **I2t of S zone**: `On`, `Off`, `None`.
+-   **Range current S zone Isd=Ir*...**: allowed `Isd` values/range.
+-   **Range time S zone ...**: allowed `tsd` values/range or JSON map by dial position.
+-   **Range current I zone Ii=In*...**: instantaneous pickup values/range.
+-   **I zone time accuracy ...**: instantaneous current tolerance band.
+-   **Range time ... s.1**: instantaneous time range `[t_min, t_max]`.

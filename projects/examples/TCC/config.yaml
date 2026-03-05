@@ -1,0 +1,54 @@
+project_name: "TCC_Debug_Micrologic"
+
+# Vertical current lines [A]
+current_lines_a: [500, 800, 1200, 2500, 6000]
+
+# Horizontal time lines [s]
+time_lines_s: [0.05, 0.1, 0.2, 1.0, 10.0]
+
+plot_i_min_a: 100
+plot_i_max_a: 30000
+
+devices:
+  - name: "ML5.3 main"
+    type: Breaker
+    breaker_id: "NSX630N_3P_ML_5.3_630A"
+    protection_settings:
+      type: Breaker
+      L_stage:
+        active: true
+        Ir: 0.8
+        tr: 16.0
+      S_stage:
+        active: true
+        mode: i2t_on
+        Isd: 5.0
+        tsd: 0.2
+      I_stage:
+        active: true
+        Ii: 10.0
+
+  - name: "TM16D feeder"
+    type: Breaker
+    breaker_id: "NSX100B_3P_TM16D"
+    protection_settings:
+      type: Breaker
+      L_stage:
+        active: true
+        Ir: 0.7
+
+  - name: "Relay sample"
+    type: Relay
+    protection_settings:
+      type: Relay
+      L_stage:
+        active: true
+        mode: iec_inverse
+        curve_type: standard_inverse
+        I1_A: 1000
+        t1_s: 0.5
+      S_stage:
+        active: true
+        mode: flat
+        I2_A: 4000
+        t2_s: 0.1

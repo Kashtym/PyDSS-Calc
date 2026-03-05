@@ -4,22 +4,17 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-import re
 from pathlib import Path
 from typing import Any
 from math import sqrt
 
-
-def _safe_token(name: str) -> str:
-    token = re.sub(r"[^A-Za-z0-9_]", "_", str(name).strip())
-    token = re.sub(r"_+", "_", token).strip("_")
-    return token or "N"
-
+from engine.constants import AC_VNOM_400V_V, AC_VNOM_6KV_V, NOMINAL_DC_VOLTAGE_V
+from engine.utils import safe_token
 
 class SubstationReport:
     """Generate text reports for AC/DC substation calculations."""
 
-    NOMINAL_DC_V = 220.0
+    NOMINAL_DC_V = NOMINAL_DC_VOLTAGE_V
 
     def __init__(
         self,
@@ -34,6 +29,8 @@ class SubstationReport:
         source_bus: str,
         load_bus: str,
         protection_rows: list[dict[str, Any]],
+        protection_trace_rows: list[dict[str, Any]] | None = None,
+        validation_data: dict[str, Any] | None = None,
     ) -> None:
         self.project_name = project_name
         self.mode = mode.upper()
@@ -46,6 +43,8 @@ class SubstationReport:
         self.source_bus = source_bus
         self.load_bus = load_bus
         self.protection_rows = protection_rows
+        self.protection_trace_rows = protection_trace_rows or []
+        self.validation_data = validation_data or {}
 
     def write(self, output_path: str) -> str:
         """Write report to file and return resolved path."""
@@ -78,6 +77,11 @@ class SubstationReport:
 
         if self.protection_rows:
             sections += self._section_protection()
+        if self.protection_trace_rows:
+            sections += self._section_protection_trace()
+
+        if self.mode == "AC" and self.validation_data:
+            sections += self._section_validation()
 
         return "\n".join(sections) + "\n"
 
@@ -127,7 +131,6 @@ class SubstationReport:
             "-----------------------",
             f"BasekV: {basekv:.3f}",
         ]
-        ...
         rows += [
             f"Source pu: {float(cfg.get('pu', 1.0)):.3f}",
             f"X/R ratio: {float(xr):.3f}",
@@ -204,22 +207,23 @@ class SubstationReport:
                 drop_pct = (drop_v / nominal_v * 100.0) if nominal_v > 0 else 0.0
                 rows.append(f"{bus} | {voltage:.3f} | {voltage_pct:.1f} | {drop_v:.3f} | {drop_pct:.3f}")
         else:
-            rows.append("Bus Name | V1N (V) | V2N (V) | V3N (V) | Vnom (V) | Max Drop (%)")
+            rows.append("Bus Name | V1N (V) | V2N (V) | V3N (V) | Vnom (V) | Avg Drop (%)")
             for bus in sorted(bus_voltages.keys()):
                 phase_v = bus_phase_voltages.get(bus, {})
                 v1 = float(phase_v.get("V1N_V", 0.0))
                 v2 = float(phase_v.get("V2N_V", 0.0))
                 v3 = float(phase_v.get("V3N_V", 0.0))
-                vmax = max(v1, v2, v3)
+                non_zero = [v for v in (v1, v2, v3) if v > 0.0]
+                vavg = sum(non_zero) / len(non_zero) if non_zero else 0.0
 
-                if vmax > 1000:
-                    vnom = 6000.0 / sqrt(3.0)
-                elif vmax > 100:
-                    vnom = 400.0 / sqrt(3.0)
+                if vavg > 1000:
+                    vnom = AC_VNOM_6KV_V / sqrt(3.0)
+                elif vavg > 100:
+                    vnom = AC_VNOM_400V_V / sqrt(3.0)
                 else:
-                    vnom = vmax or 1.0
+                    vnom = vavg or 1.0
 
-                drop = ((vnom - vmax) / vnom * 100.0) if vnom > 0 else 0.0
+                drop = ((vnom - vavg) / vnom * 100.0) if vnom > 0 else 0.0
                 rows.append(f"{bus} | {v1:.3f} | {v2:.3f} | {v3:.3f} | {vnom:.1f} | {drop:.3f}")
 
         rows.append("")
@@ -237,7 +241,7 @@ class SubstationReport:
             buses_data = self.fault["buses"]
             rows.append("Bus Name | Isc3 (A) | Isc1 (A)")
             for bus in sorted(bus_voltages.keys()):
-                norm_bus = _safe_token(bus).lower()
+                norm_bus = safe_token(bus).lower()
                 data = buses_data.get(norm_bus, {})
                 isc3 = float(data.get("Isc3", 0.0))
                 isc1 = float(data.get("Isc1", 0.0))
@@ -252,7 +256,7 @@ class SubstationReport:
 
             rows.append("Bus Name | I_sc (A)")
             for bus in sorted(bus_voltages.keys()):
-                norm_bus = _safe_token(bus).lower()
+                norm_bus = safe_token(bus).lower()
                 current = fault_bus_values.get(norm_bus, 0.0)
                 rows.append(f"{bus} | {current:.3f}")
 
@@ -274,5 +278,74 @@ class SubstationReport:
                 f"{row['device_type']} | {row['device_id']} | {row['bus']} | "
                 f"{row['fault_current_a']:.3f} | "
                 f"{row['trip_time_min_s']:.6f} | {row['trip_time_max_s']:.6f}"
+            )
+        return rows
+
+    def _section_protection_trace(self) -> list[str]:
+        rows = ["", "Protection Trace", "----------------"]
+        rows.append("Device | Type | Bus | In (A) | L(active/mode/pickup/time) | S(active/mode/pickup/time) | I(active/mode/pickup/time)")
+        for row in self.protection_trace_rows:
+            l = row.get("L", {}) if isinstance(row.get("L"), dict) else {}
+            s = row.get("S", {}) if isinstance(row.get("S"), dict) else {}
+            i = row.get("I", {}) if isinstance(row.get("I"), dict) else {}
+            in_text = "-" if str(row.get("device_type", "")).lower() == "relay" else f"{float(row.get('In', 0.0)):.3f}"
+            l_mode = l.get("mode") or "None"
+            s_mode = s.get("mode") or "None"
+            i_mode = i.get("mode") or "None"
+            l_pick = l.get("pickup_a") if l.get("pickup_a") is not None else l.get("pickup")
+            s_pick = s.get("pickup_a") if s.get("pickup_a") is not None else s.get("pickup")
+            i_pick = i.get("pickup_a") if i.get("pickup_a") is not None else i.get("pickup")
+            rows.append(
+                f"{row.get('device')} | {row.get('device_type')} | {row.get('bus')} | {in_text} | "
+                f"{l.get('active')}/{l_mode}/{l_pick}/{l.get('time')} | "
+                f"{s.get('active')}/{s_mode}/{s_pick}/{s.get('time')} | "
+                f"{i.get('active')}/{i_mode}/{i_pick}/{i.get('time')}"
+            )
+        return rows
+
+    def _section_validation(self) -> list[str]:
+        rows = ["", "AC Validation Trace", "-------------------"]
+
+        source_eq = self.validation_data.get("source_equivalent", {})
+        if isinstance(source_eq, dict) and source_eq:
+            rows.append("Source equivalent checks")
+            rows.append(
+                "basekv={:.3f}, isc3={:.3f} A, X/R={:.3f}, Z1={:.6f} Ohm, R1={:.6f} Ohm, X1={:.6f} Ohm".format(
+                    float(source_eq.get("basekv", 0.0)),
+                    float(source_eq.get("isc3_a", 0.0)),
+                    float(source_eq.get("x_r_ratio", 0.0)),
+                    float(source_eq.get("z1_ohm", 0.0)),
+                    float(source_eq.get("r1_ohm", 0.0)),
+                    float(source_eq.get("x1_ohm", 0.0)),
+                )
+            )
+            rows.append("")
+
+        rows.append("Voltage checks")
+        rows.append("Bus | Vmax_LN (V) | Vnom_LN (V) | Drop (%)")
+        for item in self.validation_data.get("bus_voltage_checks", []):
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                "{} | {:.3f} | {:.3f} | {:.3f}".format(
+                    str(item.get("bus", "")),
+                    float(item.get("vmax_ln_v", 0.0)),
+                    float(item.get("vnom_ln_v", 0.0)),
+                    float(item.get("drop_pct", 0.0)),
+                )
+            )
+        rows.append("")
+
+        rows.append("Fault checks")
+        rows.append("Bus | Isc3 (A) | Isc1 (A)")
+        for item in self.validation_data.get("fault_current_checks", []):
+            if not isinstance(item, dict):
+                continue
+            rows.append(
+                "{} | {:.3f} | {:.3f}".format(
+                    str(item.get("bus", "")),
+                    float(item.get("isc3_a", 0.0)),
+                    float(item.get("isc1_a", 0.0)),
+                )
             )
         return rows
